@@ -1,64 +1,61 @@
 import os
+import logging
+import phonenumbers
 import re
 import requests
-import phonenumbers
 from phonenumbers import geocoder
 from telegram import Update
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
-# ENV VAR
-E_AUTH_V = os.getenv('E_AUTH_V')
-E_AUTH = os.getenv('E_AUTH')
-E_AUTH_C = os.getenv('E_AUTH_C')
-E_AUTH_K = os.getenv('E_AUTH_K')
-TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+# Logging
+logging.basicConfig(level=logging.INFO)
 
-def start(update: Update, context: CallbackContext):
-    update.message.reply_text("👋 Welcome! Send a phone number (with country code). Example: +8801711111111")
+# Environment variables
+BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+E_AUTH = os.getenv("E_AUTH")
+E_AUTH_V = os.getenv("E_AUTH_V")
+E_AUTH_C = os.getenv("E_AUTH_C")
+E_AUTH_K = os.getenv("E_AUTH_K")
 
-def handle_phone(update: Update, context: CallbackContext):
-    text = update.message.text.strip()
+# Start command
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("👋 নম্বর পাঠান (দেশ কোড সহ) যেমনঃ +88017xxxxxxx")
 
-    # Validate phone number
+# Message handler
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    phone_number = update.message.text.strip()
+
     try:
-        parsed_number = phonenumbers.parse(text, None)
-        if not phonenumbers.is_valid_number(parsed_number):
-            update.message.reply_text("❌ Invalid number! Use format: +88017...")
-            return
-    except Exception:
-        update.message.reply_text("❌ Invalid number! Use format: +88017...")
+        parsed_number = phonenumbers.parse(phone_number, None)
+        country_name = geocoder.description_for_number(parsed_number, "en")
+    except phonenumbers.phonenumberutil.NumberParseException:
+        await update.message.reply_text("❌ সঠিক আন্তর্জাতিক নম্বর দিন (যেমন: +8801712345678)")
         return
 
-    country_name = geocoder.description_for_number(parsed_number, "en")
-    phone_clean = re.sub(r'[^\d]', '', text)
+    phone_number_clean = re.sub(r'[^\d]', '', phone_number)
 
-    headers_name = {
+    # First API call for name
+    url_name = f"https://api.eyecon-app.com/app/getnames.jsp?cli={phone_number_clean}&lang=en&is_callerid=true&is_ic=true&cv=vc_542_vn_4.0.542_a"
+    headers = {
         "User-Agent": "Mozilla/5.0",
-        "accept": "application/json",
         "e-auth-v": E_AUTH_V,
         "e-auth": E_AUTH,
         "e-auth-c": E_AUTH_C,
-        "e-auth-k": E_AUTH_K,
-        "accept-charset": "UTF-8",
-        "content-type": "application/x-www-form-urlencoded; charset=utf-8",
-        "Host": "api.eyecon-app.com",
-        "Connection": "Keep-Alive",
-        "Accept-Encoding": "gzip"
+        "e-auth-k": E_AUTH_K
     }
 
-    url_name = f"https://api.eyecon-app.com/app/getnames.jsp?cli={phone_clean}&lang=en&is_callerid=true&is_ic=true&cv=vc_542_vn_4.0.542_a&requestApi=URLconnection&source=MenifaFragment"
-    response_name = requests.get(url_name, headers=headers_name)
+    response_name = requests.get(url_name, headers=headers)
+    if response_name.status_code != 200:
+        await update.message.reply_text("❌ নাম আনতে সমস্যা হয়েছে।")
+        return
 
-    if response_name.status_code == 200 and response_name.json():
-        data = response_name.json()
-        name = data[0].get('name', 'No name found') if data else 'No data found.'
-    else:
-        name = "No data found."
+    data = response_name.json()
+    name = data[0].get('name', '❓ নাম পাওয়া যায়নি') if data else '❓ নাম পাওয়া যায়নি'
 
-    # Optional: picture
+    # Second API call for photo
     url_pic = "https://api.eyecon-app.com/app/pic"
     params = {
-        'cli': phone_clean,
+        'cli': phone_number_clean,
         'is_callerid': 'true',
         'size': 'big',
         'type': '0',
@@ -66,27 +63,20 @@ def handle_phone(update: Update, context: CallbackContext):
         'cancelfresh': '0',
         'cv': 'vc_542_vn_4.0.542_a'
     }
-    headers_pic = headers_name
-    response_pic = requests.get(url_pic, params=params, headers=headers_pic)
 
-    if response_pic.status_code == 200 and response_pic.history:
-        image_url = response_pic.url
-        fb_user_id = re.search(r'facebook\.com/(\d+)', response_pic.history[-1].url)
-        fb_id = fb_user_id.group(1) if fb_user_id else "Not found"
+    response_pic = requests.get(url_pic, headers=headers, params=params)
+    image_url = response_pic.url if response_pic.status_code == 200 else None
+
+    msg = f"📞 নম্বর: {phone_number}\n🌍 দেশ: {country_name}\n👤 নাম: {name}"
+
+    if image_url:
+        await update.message.reply_photo(photo=image_url, caption=msg)
     else:
-        image_url = "Not found"
-        fb_id = "Not found"
+        await update.message.reply_text(msg)
 
-    msg = f"📱 Phone: {text}\n🌍 Country: {country_name}\n👤 Name: {name}\n🖼️ Image: {image_url}\n🔗 FB ID: {fb_id}"
-    update.message.reply_text(msg)
-
-def main():
-    updater = Updater(TOKEN)
-    dp = updater.dispatcher
-    dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_phone))
-    updater.start_polling()
-    updater.idle()
-
-if __name__ == "__main__":
-    main()
+# Main
+if __name__ == '__main__':
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.run_polling()
