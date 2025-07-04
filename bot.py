@@ -7,15 +7,16 @@ from phonenumbers import geocoder
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
-# Logging
-logging.basicConfig(level=logging.INFO)
+from dotenv import load_dotenv
 
-# Environment variables
-BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+load_dotenv()  # এটা .env ফাইল থেকে ভেরিয়েবলগুলো লোড করবে
+
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 E_AUTH = os.getenv("E_AUTH")
 E_AUTH_V = os.getenv("E_AUTH_V")
 E_AUTH_C = os.getenv("E_AUTH_C")
 E_AUTH_K = os.getenv("E_AUTH_K")
+
 
 # Start command
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
